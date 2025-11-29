@@ -1,0 +1,446 @@
+package com.example.ecommerce;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.*;
+
+public abstract class Entity {
+    protected UUID id;
+    protected LocalDateTime createdAt;
+    protected LocalDateTime updatedAt;
+
+    public Entity() {
+        this.id = UUID.randomUUID();
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = createdAt;
+    }
+
+    public UUID getId() { return id; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    protected void touch() { this.updatedAt = LocalDateTime.now(); }
+}
+
+class Address {
+    private String street, city, postcode, country;
+    public Address(String street, String city, String postcode, String country) {
+        this.street = street; this.city = city; this.postcode = postcode; this.country = country;
+    }
+    public String toString() { return street + ", " + city + " " + postcode + ", " + country; }
+}
+
+abstract class User extends Entity {
+    protected String name;
+    protected String email;
+    protected String phone;
+    protected Address address;
+    protected String role;
+    protected String passwordHash; // demo only!
+
+    public User(String name, String email, String phone, Address address, String role) {
+        super();
+        this.name = name; this.email = email; this.phone = phone; this.address = address; this.role = role;
+    }
+
+    public abstract boolean authenticate(String password);
+    public void updateProfile(String name, String phone, Address addr) {
+        this.name = name; this.phone = phone; this.address = addr; touch();
+    }
+
+    public String getName(){ return name; }
+    public String getEmail(){ return email; }
+}
+
+class Customer extends User {
+    private int loyaltyPoints = 0;
+    private List<Order> orderHistory = new ArrayList<>();
+    private Cart cart = new Cart(this);
+
+    public Customer(String name, String email, String phone, Address address) {
+        super(name,email,phone,address,"CUSTOMER");
+    }
+
+    @Override
+    public boolean authenticate(String password) {
+        // demo: accept any password that equals "pass"
+        return "pass".equals(password);
+    }
+
+    public Cart getCart() { return cart; }
+    public void addOrder(Order order) { orderHistory.add(order); }
+    public List<Order> getOrderHistory(){ return Collections.unmodifiableList(orderHistory); }
+
+    public void creditPoints(int p) { loyaltyPoints += p; }
+    public boolean redeemPoints(int p) {
+        if (p <= loyaltyPoints) { loyaltyPoints -= p; return true; }
+        return false;
+    }
+    public int getLoyaltyPoints(){ return loyaltyPoints; }
+}
+
+class Admin extends User {
+    private Set<String> permissions = new HashSet<>();
+    public Admin(String name, String email, String phone, Address address) {
+        super(name,email,phone,address,"ADMIN");
+    }
+    @Override
+    public boolean authenticate(String password) {
+        return "admin".equals(password);
+    }
+    public void addPermission(String perm){ permissions.add(perm); }
+    public Set<String> getPermissions(){ return permissions; }
+}
+
+class Category {
+    private UUID id = UUID.randomUUID();
+    private String name;
+    private Category parent;
+
+    public Category(String name) { this.name = name; }
+    public void setParent(Category p){ this.parent = p; }
+    public String getName(){ return name; }
+}
+
+abstract class Product extends Entity {
+    protected String sku;
+    protected String name;
+    protected String description;
+    protected BigDecimal price;
+    protected int stockQuantity;
+    protected Category category;
+
+    public Product(String sku, String name, String description, BigDecimal price, int stockQuantity, Category category) {
+        super();
+        this.sku = sku; this.name = name; this.description = description; this.price = price;
+        this.stockQuantity = stockQuantity; this.category = category;
+    }
+
+    public abstract boolean isShippable();
+    public void adjustStock(int delta) { stockQuantity += delta; touch(); }
+    public int getStockQuantity(){ return stockQuantity; }
+    public BigDecimal getPrice(){ return price; }
+    public String getName(){ return name; }
+    public String getSku(){ return sku; }
+}
+
+class PhysicalProduct extends Product {
+    public PhysicalProduct(String sku, String name, String description, BigDecimal price, int stockQuantity, Category category) {
+        super(sku,name,description,price,stockQuantity,category);
+    }
+    @Override public boolean isShippable() { return true; }
+}
+
+class DigitalProduct extends Product {
+    public DigitalProduct(String sku, String name, String description, BigDecimal price, Category category) {
+        super(sku,name,description,price, Integer.MAX_VALUE, category); // unlimited stock
+    }
+    @Override public boolean isShippable() { return false; }
+}
+
+class InventoryRecord {
+    private UUID id = UUID.randomUUID();
+    private UUID productId;
+    private UUID warehouseId;
+    private int quantityAvailable;
+    private int reservedQuantity = 0;
+
+    public InventoryRecord(UUID productId, UUID warehouseId, int qty) {
+        this.productId = productId; this.warehouseId = warehouseId; this.quantityAvailable = qty;
+    }
+    public boolean reserve(int q){
+        if (q <= (quantityAvailable - reservedQuantity)) { reservedQuantity += q; return true; }
+        return false;
+    }
+    public void unreserve(int q){ reservedQuantity = Math.max(0, reservedQuantity - q); }
+    public void transferTo(InventoryRecord target, int q){
+        if (q <= (quantityAvailable - reservedQuantity)) {
+            quantityAvailable -= q;
+            target.quantityAvailable += q;
+        }
+    }
+}
+
+class Cart {
+    private UUID id = UUID.randomUUID();
+    private Customer customer;
+    private List<CartItem> items = new ArrayList<>();
+    private PromoCode promo;
+
+    public Cart(Customer customer){ this.customer = customer; }
+
+    public void addItem(Product p, int qty) {
+        items.add(new CartItem(p, qty, p.getPrice()));
+    }
+    public void removeItem(UUID productSku) {
+        items.removeIf(ci -> ci.getProduct().getSku().equals(productSku.toString()));
+    }
+    public BigDecimal calculateTotal() {
+        BigDecimal total = BigDecimal.ZERO;
+        for (CartItem it : items) total = total.add(it.getPrice().multiply(BigDecimal.valueOf(it.getQty())));
+        if (promo != null && promo.validate(total)) total = total.subtract(promo.apply(total));
+        return total.max(BigDecimal.ZERO);
+    }
+    public void applyPromo(PromoCode p) { this.promo = p; }
+    public List<CartItem> getItems(){ return Collections.unmodifiableList(items); }
+}
+
+
+class CartItem {
+    private Product product;
+    private int qty;
+    private BigDecimal price;
+    public CartItem(Product product, int qty, BigDecimal price){ this.product = product; this.qty = qty; this.price = price; }
+    public Product getProduct(){ return product; }
+    public int getQty(){ return qty; }
+    public BigDecimal getPrice(){ return price; }
+}
+
+enum OrderStatus { NEW, PROCESSING, PACKED, SHIPPED, DELIVERING, DELIVERED, CANCELLED, RETURNED }
+
+class Order extends Entity {
+    private Customer customer;
+    private List<OrderItem> items = new ArrayList<>();
+    private OrderStatus status = OrderStatus.NEW;
+    private BigDecimal totalAmount = BigDecimal.ZERO;
+    private Payment payment;
+    private Delivery delivery;
+    private int loyaltyPointsEarned = 0;
+
+    public Order(Customer customer){ this.customer = customer; }
+
+    public void addItem(Product p, int qty) {
+        items.add(new OrderItem(p, qty, p.getPrice()));
+    }
+    public void calculateTotal() {
+        totalAmount = BigDecimal.ZERO;
+        for (OrderItem it : items) totalAmount = totalAmount.add(it.subtotal());
+    }
+    public BigDecimal getTotalAmount(){ return totalAmount; }
+
+    public boolean placeOrder() {
+        if (items.isEmpty()) return false;
+        calculateTotal();
+        this.status = OrderStatus.PROCESSING;
+        touch();
+        return true;
+    }
+    public boolean cancel() {
+        if (status == OrderStatus.DELIVERED) return false;
+        status = OrderStatus.CANCELLED; touch();
+        return true;
+    }
+    public boolean pay(Payment p) {
+        if (p.process()) { this.payment = p; this.status = OrderStatus.PACKED; touch(); return true; }
+        return false;
+    }
+    public void setDelivery(Delivery d){ this.delivery = d; }
+    public void setLoyaltyPointsEarned(int pts){ this.loyaltyPointsEarned = pts; }
+}
+
+class OrderItem {
+    private Product product;
+    private int qty;
+    private BigDecimal unitPrice;
+    public OrderItem(Product p, int qty, BigDecimal unitPrice){ this.product = p; this.qty = qty; this.unitPrice = unitPrice; }
+    public BigDecimal subtotal(){ return unitPrice.multiply(BigDecimal.valueOf(qty)); }
+    public Product getProduct(){ return product; }
+    public int getQty(){ return qty; }
+}
+
+enum PaymentType { CARD, E_WALLET, BANK_TRANSFER }
+enum PaymentStatus { PENDING, SUCCESS, FAILED, REFUNDED }
+
+class Payment extends Entity {
+    private PaymentType type;
+    private BigDecimal amount;
+    private PaymentStatus status = PaymentStatus.PENDING;
+    private String transactionRef;
+
+    private PaymentGateway gateway; // adapter
+
+    public Payment(PaymentType type, BigDecimal amount, PaymentGateway gateway) {
+        this.type = type; this.amount = amount; this.gateway = gateway;
+    }
+
+    public boolean process() {
+        PaymentResponse resp = gateway.charge(this);
+        if (resp != null && resp.isSuccess()) {
+            this.status = PaymentStatus.SUCCESS;
+            this.transactionRef = resp.getTransactionId();
+            touch();
+            return true;
+        } else {
+            this.status = PaymentStatus.FAILED; touch();
+            return false;
+        }
+    }
+
+    public boolean refund() {
+        if (this.transactionRef == null) return false;
+        RefundResponse r = gateway.refund(this.transactionRef, this.amount);
+        if (r != null && r.isSuccess()) { this.status = PaymentStatus.REFUNDED; touch(); return true; }
+        return false;
+    }
+
+    public BigDecimal getAmount(){ return amount; }
+}
+
+interface PaymentGateway {
+    PaymentResponse charge(Payment payment);
+    RefundResponse refund(String transactionId, BigDecimal amount);
+    boolean validateWebhook(String payload);
+}
+
+class PaymentResponse {
+    private boolean success;
+    private String transactionId;
+    public PaymentResponse(boolean success, String transactionId){ this.success = success; this.transactionId = transactionId; }
+    public boolean isSuccess(){ return success; }
+    public String getTransactionId(){ return transactionId; }
+}
+
+class RefundResponse {
+    private boolean success;
+    public RefundResponse(boolean success){ this.success = success; }
+    public boolean isSuccess(){ return success; }
+}
+
+class SimpleMockPaymentGateway implements PaymentGateway {
+    @Override
+    public PaymentResponse charge(Payment payment) {
+        // naive mock: succeed if amount > 0
+        if (payment.getAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return new PaymentResponse(true, "TXN-" + UUID.randomUUID());
+        }
+        return new PaymentResponse(false, null);
+    }
+    @Override
+    public RefundResponse refund(String transactionId, BigDecimal amount) {
+        return new RefundResponse(true);
+    }
+    @Override
+    public boolean validateWebhook(String payload) { return true; }
+}
+
+enum DeliveryStatus { PENDING, DISPATCHED, IN_TRANSIT, DELIVERED, FAILED }
+
+class Delivery extends Entity {
+    private UUID orderId;
+    private Address address;
+    private DeliveryStatus status = DeliveryStatus.PENDING;
+    private Courier courier;
+    private String trackingNumber;
+
+    public Delivery(UUID orderId, Address address) {
+        this.orderId = orderId; this.address = address;
+        this.trackingNumber = "TRK-" + UUID.randomUUID().toString().substring(0,8).toUpperCase();
+    }
+
+    public void dispatch(Courier courier) { this.courier = courier; this.status = DeliveryStatus.DISPATCHED; touch(); }
+    public void updateStatus(DeliveryStatus s) { this.status = s; touch(); }
+    public String getTrackingNumber(){ return trackingNumber; }
+}
+
+class Courier {
+    private UUID id = UUID.randomUUID();
+    private String name, phone;
+    public Courier(String name, String phone){ this.name = name; this.phone = phone; }
+    public void acceptDelivery(Delivery d){ d.dispatch(this); }
+}
+
+enum PromoType { PERCENT, AMOUNT }
+class PromoCode {
+    private String code;
+    private PromoType type;
+    private BigDecimal value;
+    private LocalDateTime validFrom, validTo;
+    private int usageLimit = Integer.MAX_VALUE;
+    private int used = 0;
+
+    public PromoCode(String code, PromoType type, BigDecimal value, LocalDateTime from, LocalDateTime to){
+        this.code = code; this.type = type; this.value = value; this.validFrom = from; this.validTo = to;
+    }
+    public boolean validate(BigDecimal cartTotal) {
+        LocalDateTime now = LocalDateTime.now();
+        return now.isAfter(validFrom) && now.isBefore(validTo) && used < usageLimit && cartTotal.compareTo(BigDecimal.ZERO) > 0;
+    }
+    public BigDecimal apply(BigDecimal cartTotal) {
+        if (!validate(cartTotal)) return BigDecimal.ZERO;
+        used++;
+        if (type == PromoType.PERCENT) {
+            return cartTotal.multiply(value).divide(BigDecimal.valueOf(100));
+        } else {
+            return value.min(cartTotal);
+        }
+    }
+}
+
+class Review {
+    private UUID id = UUID.randomUUID();
+    private UUID productId;
+    private UUID customerId;
+    private int rating;
+    private String text;
+    private LocalDateTime createdAt = LocalDateTime.now();
+
+    public Review(UUID productId, UUID customerId, int rating, String text){
+        this.productId = productId; this.customerId = customerId; this.rating = rating; this.text = text;
+    }
+}
+
+class LoyaltyAccount {
+    private UUID customerId;
+    private int pointsBalance;
+    public LoyaltyAccount(UUID customerId){ this.customerId = customerId; this.pointsBalance = 0; }
+    public void credit(int p){ pointsBalance += p; }
+    public boolean debit(int p){ if (p <= pointsBalance) { pointsBalance -= p; return true; } return false; }
+    public int getBalance(){ return pointsBalance; }
+}
+
+class ProductFactory {
+    public static Product createProduct(String type, String sku, String name, String desc, BigDecimal price, int stock, Category category) {
+        switch (type.toUpperCase()) {
+            case "PHYSICAL":
+                return new PhysicalProduct(sku,name,desc,price,stock,category);
+            case "DIGITAL":
+                return new DigitalProduct(sku,name,desc,price,category);
+            default:
+                throw new IllegalArgumentException("Unknown product type: " + type);
+        }
+    }
+}
+
+class Demo {
+    public static void main(String[] args) {
+        Category cat = new Category("Electronics");
+        Product phone = ProductFactory.createProduct("PHYSICAL","SKU-001","Smartphone","Good phone", new BigDecimal("399.99"), 10, cat);
+        Product ebook = ProductFactory.createProduct("DIGITAL","SKU-002","E-Book","Learn Java", new BigDecimal("9.99"), 0, cat);
+
+        Address addr = new Address("Main St 1", "Almaty", "050000", "Kazakhstan");
+        Customer cust = new Customer("Bauken", "bauken@example.com", "+7701xxxxxxx", addr);
+
+        // Cart flow
+        cust.getCart().addItem(phone, 1);
+        cust.getCart().addItem(ebook, 1);
+        PromoCode promo = new PromoCode("WELCOME", PromoType.PERCENT, BigDecimal.valueOf(10), LocalDateTime.now().minusDays(1), LocalDateTime.now().plusDays(30));
+        cust.getCart().applyPromo(promo);
+        BigDecimal total = cust.getCart().calculateTotal();
+        System.out.println("Cart total: " + total);
+
+        Order order = new Order(cust);
+        for (CartItem ci : cust.getCart().getItems()) order.addItem(ci.getProduct(), ci.getQty());
+        order.placeOrder();
+        order.calculateTotal();
+        System.out.println("Order total after place: " + order.getTotalAmount());
+
+        Payment payment = new Payment(PaymentType.CARD, order.getTotalAmount(), new SimpleMockPaymentGateway());
+        boolean paid = order.pay(payment);
+        System.out.println("Payment success: " + paid + ", status: " + (paid ? "PAID" : "FAILED"));
+
+        Delivery delivery = new Delivery(order.getId(), addr);
+        Courier courier = new Courier("Askar", "+7701yyyyyyy");
+        courier.acceptDelivery(delivery);
+        order.setDelivery(delivery);
+        System.out.println("Tracking: " + delivery.getTrackingNumber());
+    }
+}
