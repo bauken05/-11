@@ -1,0 +1,64 @@
+@startuml
++ updateProfile()
+}
+
+
+class Customer {
+- loyaltyPoints: int
++ addToCart()
++ checkout()
+}
+
+
+class Admin {
+- permissions: Set
++ createProduct()
++ viewLogs()
+}
+
+
+Entity <|-- User
+User <|-- Customer
+User <|-- Admin
+
+
+class Product {
+- sku: String
+- name: String
+- description: String
+- price: Money
+- stockQuantity: int
++ create()
++ update()
++ delete()
+}
+
+
+class Category
+class InventoryRecord
+class Cart
+class CartItem
+class Order
+class OrderItem
+class Payment
+class Delivery
+class Courier
+class PromoCode
+class Review
+class LoyaltyAccount
+class AdminActionLog
+
+
+Product "1" -- "*" InventoryRecord : has >
+Product "*" -- "1" Category : belongs to >
+Customer "1" -- "*" Order : places >
+Order "1" -- "*" OrderItem : contains >
+OrderItem "*" -- "1" Product : references >
+Order "1" -- "1" Delivery : uses >
+Order "1" -- "1" Payment : paid by >
+Cart "1" -- "*" CartItem : contains >
+CartItem "*" -- "1" Product : refers >
+Admin "1" -- "*" AdminActionLog : logs >
+
+
+@enduml
