@@ -1,0 +1,45 @@
+@startuml
+package "Frontend" {
+[Web App] as WebApp
+[Courier Mobile App] as CourierApp
+}
+
+
+package "Backend" {
+[API Gateway] as APIGW
+[Order Service] as OrderSvc
+[Inventory Service] as InventorySvc
+[Logistics Service] as LogisticsSvc
+[Payment Service] as PaymentSvc
+[Notification Service] as NotifySvc
+[Analytics Service] as AnalyticsSvc
+[Auth Service] as AuthSvc
+database "Main DB" as DB
+}
+
+
+package "External" {
+[Courier Provider API] as CourierAPI
+[Payment Gateway API] as PaymentAPI
+[Maps / Routing API] as MapsAPI
+}
+
+
+WebApp --> APIGW : REST
+CourierApp --> APIGW : REST / WebSocket
+APIGW --> AuthSvc : auth token
+APIGW --> OrderSvc : REST
+OrderSvc --> InventorySvc : gRPC/REST
+OrderSvc --> PaymentSvc : REST
+OrderSvc --> LogisticsSvc : REST
+LogisticsSvc --> CourierAPI : REST / Webhook
+LogisticsSvc --> MapsAPI : routing requests
+NotifySvc --> WebApp : WebSocket / Push
+NotifySvc --> CourierApp : Push
+OrderSvc --> DB : SQL
+InventorySvc --> DB : SQL
+PaymentSvc --> PaymentAPI : HTTPS
+LogisticsSvc --> CourierAPI : HTTPS
+
+
+@enduml
